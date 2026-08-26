@@ -1,0 +1,11 @@
+[package]
+name = "emoji-seq-lint"
+version = "0.1.0"
+edition = "2021"
+authors = ["mthomas562"]
+license = "MIT"
+description = "A linter for emoji sequence definition files"
+
+[[bin]]
+name = "emojiseq"
+path = "src/main.rs"
