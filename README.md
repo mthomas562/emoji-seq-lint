@@ -19,6 +19,10 @@ the file and checks that each entry is a structurally valid emoji
 sequence (single codepoint, ZWJ sequence, regional-indicator flag
 pair, skin tone modifier pair, keycap, or tag sequence), and reports
 every problem with the line and column of the exact token at fault.
+It also catches a second, unrelated failure mode: the same `:name:`
+defined twice, usually from copy-pasting a line and forgetting to
+change the shortcode, which silently shadows whichever entry a
+consumer happens to load first.
 
 ## Format
 
@@ -81,11 +85,11 @@ for entry in &entries {
 
 ## Status
 
-Early skeleton. The parser and structural classifier work; what's
-missing is cross-referencing entries against the actual Unicode
-recommended-for-general-interchange sequence list, so right now a
-sequence can be structurally well-formed (right shape of ZWJ joins,
-right kind of modifier) without being a sequence any font or platform
-actually renders. See the roadmap for what's next.
+Early skeleton. The parser, structural classifier, and duplicate-name
+check work; what's missing is cross-referencing entries against the
+actual Unicode recommended-for-general-interchange sequence list, so
+right now a sequence can be structurally well-formed (right shape of
+ZWJ joins, right kind of modifier) without being a sequence any font
+or platform actually renders.
 
 No third-party dependencies. Standard library only.

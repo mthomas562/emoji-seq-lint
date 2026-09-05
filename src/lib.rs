@@ -7,6 +7,8 @@
 //! The parser tracks byte-accurate line and column positions so that
 //! every error can point at the exact token that caused it.
 
+use std::collections::HashMap;
+
 /// A location and width within a source line, used to draw carets
 /// under the offending token in a rendered `Diagnostic`.
 #[derive(Debug, Clone, Copy)]
@@ -19,6 +21,7 @@ pub struct CodepointSpan {
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub name: String,
+    pub name_span: CodepointSpan,
     pub codepoints: Vec<char>,
     pub positions: Vec<CodepointSpan>,
     pub line: usize,
@@ -150,6 +153,10 @@ fn parse_line(raw_line: &str, line_no: usize) -> Result<Entry, Diagnostic> {
     }
     i += 1;
     let name: String = chars[name_start..i].iter().collect();
+    let name_span = CodepointSpan {
+        column: name_start + 1,
+        length: i - name_start,
+    };
 
     for (offset, c) in chars[name_start + 1..i - 1].iter().enumerate() {
         if !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_' || *c == '-' || *c == '+') {
@@ -237,10 +244,39 @@ fn parse_line(raw_line: &str, line_no: usize) -> Result<Entry, Diagnostic> {
 
     Ok(Entry {
         name,
+        name_span,
         codepoints,
         positions,
         line: line_no,
     })
+}
+
+/// Find entries whose `:name:` repeats within the same file. The first
+/// definition of a name is treated as authoritative; every later
+/// occurrence is reported, pointing at the repeated name and noting
+/// where it was first defined.
+pub fn find_duplicates(entries: &[Entry]) -> Vec<Diagnostic> {
+    let mut first_seen: HashMap<&str, usize> = HashMap::new();
+    let mut diagnostics = Vec::new();
+
+    for entry in entries {
+        match first_seen.get(entry.name.as_str()) {
+            Some(&first_line) => diagnostics.push(Diagnostic {
+                line: entry.line,
+                column: entry.name_span.column,
+                length: entry.name_span.length,
+                message: format!(
+                    "duplicate entry name \"{}\"; first defined on line {}",
+                    entry.name, first_line
+                ),
+            }),
+            None => {
+                first_seen.insert(entry.name.as_str(), entry.line);
+            }
+        }
+    }
+
+    diagnostics
 }
 
 /// Check that an entry's codepoints form one of the recognized emoji

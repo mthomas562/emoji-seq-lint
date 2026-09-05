@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-use emoji_seq_lint::{classify, parse};
+use emoji_seq_lint::{classify, find_duplicates, parse};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -53,6 +53,7 @@ fn run_check(path: &str) -> ExitCode {
             diagnostics.push(diag);
         }
     }
+    diagnostics.extend(find_duplicates(&entries));
 
     if diagnostics.is_empty() {
         println!("{}: {} entries, no errors", path, entries.len());
