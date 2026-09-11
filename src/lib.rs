@@ -369,3 +369,179 @@ fn classify_zwj(entry: &Entry) -> Result<SequenceKind, Diagnostic> {
 
     Ok(SequenceKind::ZwjSequence)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_entry(line: &str) -> Entry {
+        let (mut entries, diagnostics) = parse(line);
+        assert!(diagnostics.is_empty(), "unexpected diagnostics: {:?}", diagnostics);
+        assert_eq!(entries.len(), 1);
+        entries.pop().unwrap()
+    }
+
+    fn parse_err(line: &str) -> Diagnostic {
+        let (entries, mut diagnostics) = parse(line);
+        assert!(entries.is_empty(), "expected no entries, got {:?}", entries);
+        assert_eq!(diagnostics.len(), 1);
+        diagnostics.pop().unwrap()
+    }
+
+    #[test]
+    fn parses_name_and_codepoint_spans() {
+        let entry = one_entry(":flag_us: 1F1FA 1F1F8\n");
+        assert_eq!(entry.name, ":flag_us:");
+        assert_eq!(entry.name_span.column, 1);
+        assert_eq!(entry.name_span.length, 9);
+        assert_eq!(entry.codepoints, vec!['\u{1F1FA}', '\u{1F1F8}']);
+        assert_eq!(entry.positions[0].column, 11);
+        assert_eq!(entry.positions[0].length, 5);
+        assert_eq!(entry.positions[1].column, 17);
+        assert_eq!(entry.positions[1].length, 5);
+    }
+
+    #[test]
+    fn accepts_u_plus_prefixed_hex() {
+        let entry = one_entry(":wave: U+1F44B\n");
+        assert_eq!(entry.codepoints, vec!['\u{1F44B}']);
+    }
+
+    #[test]
+    fn skips_blank_and_comment_lines() {
+        let (entries, diagnostics) = parse("# a comment\n\n:wave: 1F44B\n");
+        assert!(diagnostics.is_empty());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, ":wave:");
+    }
+
+    #[test]
+    fn rejects_missing_leading_colon() {
+        let diag = parse_err("wave 1F44B\n");
+        assert_eq!(diag.column, 1);
+        assert_eq!(diag.length, 1);
+        assert!(diag.message.contains("starting with ':'"));
+    }
+
+    #[test]
+    fn rejects_unterminated_name() {
+        let diag = parse_err(":wave 1F44B\n");
+        assert_eq!(diag.column, 1);
+        assert!(diag.message.contains("unterminated name"));
+    }
+
+    #[test]
+    fn rejects_uppercase_in_name() {
+        let diag = parse_err(":Wave: 1F44B\n");
+        assert_eq!(diag.column, 2);
+        assert_eq!(diag.length, 1);
+        assert!(diag.message.contains("invalid character 'W'"));
+    }
+
+    #[test]
+    fn rejects_name_with_no_codepoints() {
+        let diag = parse_err(":wave:\n");
+        assert!(diag.message.contains("expected at least one codepoint"));
+    }
+
+    #[test]
+    fn rejects_missing_whitespace_after_name() {
+        let diag = parse_err(":wave:1F44B\n");
+        assert_eq!(diag.column, 7);
+        assert!(diag.message.contains("expected whitespace"));
+    }
+
+    #[test]
+    fn rejects_non_hex_token() {
+        let diag = parse_err(":train: 1F68X\n");
+        assert_eq!(diag.column, 9);
+        assert_eq!(diag.length, 5);
+        assert!(diag.message.contains("not a valid hexadecimal codepoint"));
+    }
+
+    #[test]
+    fn rejects_surrogate_codepoint() {
+        let diag = parse_err(":bad: D800\n");
+        assert!(diag.message.contains("not a valid Unicode scalar value"));
+    }
+
+    #[test]
+    fn finds_duplicate_names() {
+        let (entries, diagnostics) = parse(":wave: 1F44B\n:other: 1F600\n:wave: 1F44B\n");
+        assert!(diagnostics.is_empty());
+        let dupes = find_duplicates(&entries);
+        assert_eq!(dupes.len(), 1);
+        assert_eq!(dupes[0].line, 3);
+        assert!(dupes[0].message.contains("first defined on line 1"));
+    }
+
+    #[test]
+    fn classifies_single_codepoint() {
+        let entry = one_entry(":grin: 1F600\n");
+        assert_eq!(classify(&entry).unwrap(), SequenceKind::Single);
+    }
+
+    #[test]
+    fn classifies_flag_pair() {
+        let entry = one_entry(":flag_us: 1F1FA 1F1F8\n");
+        assert_eq!(classify(&entry).unwrap(), SequenceKind::Flag);
+    }
+
+    #[test]
+    fn classifies_skin_tone_modifier() {
+        let entry = one_entry(":thumbsup_tone2: 1F44D 1F3FC\n");
+        assert_eq!(classify(&entry).unwrap(), SequenceKind::Modifier);
+    }
+
+    #[test]
+    fn classifies_keycap_without_vs16() {
+        let entry = one_entry(":keycap_5: 35 20E3\n");
+        assert_eq!(classify(&entry).unwrap(), SequenceKind::Keycap);
+    }
+
+    #[test]
+    fn classifies_keycap_with_vs16() {
+        let entry = one_entry(":keycap_hash: 23 FE0F 20E3\n");
+        assert_eq!(classify(&entry).unwrap(), SequenceKind::Keycap);
+    }
+
+    #[test]
+    fn classifies_tag_sequence() {
+        let entry = one_entry(":tag_england: 1F3F4 E0067 E0062 E0065 E006E E0067 E007F\n");
+        assert_eq!(classify(&entry).unwrap(), SequenceKind::Tag);
+    }
+
+    #[test]
+    fn classifies_zwj_sequence() {
+        let entry = one_entry(":family_mwgb: 1F468 200D 1F469 200D 1F466 200D 1F466\n");
+        assert_eq!(classify(&entry).unwrap(), SequenceKind::ZwjSequence);
+    }
+
+    #[test]
+    fn rejects_zwj_sequence_starting_with_zwj() {
+        let entry = one_entry(":bad: 200D 1F600\n");
+        let diag = classify(&entry).unwrap_err();
+        assert!(diag.message.contains("cannot start with"));
+    }
+
+    #[test]
+    fn rejects_zwj_sequence_ending_with_zwj() {
+        let entry = one_entry(":bad: 1F600 200D\n");
+        let diag = classify(&entry).unwrap_err();
+        assert!(diag.message.contains("cannot end with"));
+    }
+
+    #[test]
+    fn rejects_consecutive_zwj() {
+        let entry = one_entry(":family_mwgb: 1F468 200D 200D 1F469\n");
+        let diag = classify(&entry).unwrap_err();
+        assert!(diag.message.contains("two consecutive zero-width joiners"));
+    }
+
+    #[test]
+    fn rejects_unrecognized_shape() {
+        let entry = one_entry(":junk: 1F600 1F601\n");
+        let diag = classify(&entry).unwrap_err();
+        assert!(diag.message.contains("does not match a known sequence shape"));
+    }
+}
